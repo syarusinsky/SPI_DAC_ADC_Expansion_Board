@@ -7,6 +7,7 @@
 #define SYS_CLOCK_FREQUENCY 72000000
 
 // global variables
+volatile bool audioReady = false;
 
 // peripheral defines
 #define ADC_SPI_NUM 		SPI_NUM::SPI_3
@@ -102,8 +103,12 @@ int main(void)
 	LLPD::gpio_output_setup( ADC_CS_PORT, ADC_CS_PIN, GPIO_PUPD::NONE, GPIO_OUTPUT_TYPE::PUSH_PULL, GPIO_OUTPUT_SPEED::HIGH );
 	LLPD::gpio_output_setup( DAC_CS_PORT, DAC_CS_PIN, GPIO_PUPD::NONE, GPIO_OUTPUT_TYPE::PUSH_PULL, GPIO_OUTPUT_SPEED::HIGH );
 
+	// set cs pins high
+	LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
+	LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, true );
+
 	// spi init (36MHz SPI2/SPI3 apb2 source, while 72MHz SPI1 apb1 source)
-	LLPD::spi_master_init( DAC_SPI_NUM, SPI_BAUD_RATE::APB1CLK_DIV_BY_2, SPI_CLK_POL::LOW_IDLE, SPI_CLK_PHASE::FIRST,
+	LLPD::spi_master_init( DAC_SPI_NUM, SPI_BAUD_RATE::APB1CLK_DIV_BY_2, SPI_CLK_POL::LOW_IDLE, SPI_CLK_PHASE::SECOND,
 				SPI_DUPLEX::FULL, SPI_FRAME_FORMAT::MSB_FIRST, SPI_DATA_SIZE::BITS_8 );
 	LLPD::spi_master_init( ADC_SPI_NUM, SPI_BAUD_RATE::APB1CLK_DIV_BY_2, SPI_CLK_POL::LOW_IDLE, SPI_CLK_PHASE::FIRST,
 				SPI_DUPLEX::FULL, SPI_FRAME_FORMAT::MSB_FIRST, SPI_DATA_SIZE::BITS_8 );
@@ -123,20 +128,8 @@ int main(void)
 	LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
 	LLPD::tim6_delay( 10000 );
 
-	// first test
-	// LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
-	// LLPD::tim6_delay( 10000 );
-	// LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, false );
-	// const uint8_t adcHighByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
-	// const uint8_t adcLowByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
-	// volatile uint16_t adcVal = ( adcHighByte << 8 ) | adcLowByte;
-	// LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
-	// LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, false );
-	// const uint16_t dacVal = 0b0111111111111111;
-	// LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, 0b0 );
-	// LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal >> 8) );
-	// LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal & 0xFF) );
-	// LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, true );
+	// ready to start sending audio
+	audioReady = true;
 
 	while ( true )
 	{
@@ -145,17 +138,17 @@ int main(void)
 
 extern "C" void TIM6_DAC_IRQHandler (void)
 {
-	if ( ! LLPD::tim6_isr_handle_delay() ) // if not currently in a delay function,...
+	if ( (! LLPD::tim6_isr_handle_delay()) && audioReady ) // if not currently in a delay function,...
 	{
 		LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, false );
 		const uint8_t adcHighByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
 		const uint8_t adcLowByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
 		LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
 		LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, false );
-		const uint16_t dacVal = 0b1111111111111111 / 2;
+		const uint16_t dacVal = ( adcHighByte << 8 ) | adcLowByte;
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, 0b0 );
-		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal & 0xFF) );
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal >> 8) );
+		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal & 0xFF) );
 		LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, true );
 	}
 
