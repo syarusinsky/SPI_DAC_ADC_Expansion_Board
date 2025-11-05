@@ -7,6 +7,8 @@
 #define SYS_CLOCK_FREQUENCY 72000000
 
 // global variables
+volatile uint16_t adcInVal = 0;
+volatile uint16_t dacOutVal = 0;
 volatile bool audioReady = false;
 
 // peripheral defines
@@ -28,6 +30,7 @@ volatile bool audioReady = false;
 #define DAC_MISO_PIN  		GPIO_PIN::PIN_14
 #define DAC_MOSI_PORT 		GPIO_PORT::B
 #define DAC_MOSI_PIN 		GPIO_PIN::PIN_15
+#define SLAVE_SPI_NUM 		SPI_NUM::SPI_1
 #define SLAVE_CS_PORT 		GPIO_PORT::A
 #define SLAVE_CS_PIN 		GPIO_PIN::PIN_4
 #define SLAVE_SCK_PORT 		GPIO_PORT::A
@@ -112,6 +115,8 @@ int main(void)
 				SPI_DUPLEX::FULL, SPI_FRAME_FORMAT::MSB_FIRST, SPI_DATA_SIZE::BITS_8 );
 	LLPD::spi_master_init( ADC_SPI_NUM, SPI_BAUD_RATE::APB1CLK_DIV_BY_2, SPI_CLK_POL::LOW_IDLE, SPI_CLK_PHASE::FIRST,
 				SPI_DUPLEX::FULL, SPI_FRAME_FORMAT::MSB_FIRST, SPI_DATA_SIZE::BITS_8 );
+	LLPD::spi1_dma_slave_init( SLAVE_SPI_NUM, SPI_CLK_POL::LOW_IDLE, SPI_CLK_PHASE::FIRST, SPI_DUPLEX::FULL,
+					SPI_FRAME_FORMAT::MSB_FIRST, SPI_DATA_SIZE::BITS_16, true );
 
 	// adc mosi pin needs to be held high
 	LLPD::gpio_output_setup( ADC_MOSI_PORT, ADC_MOSI_PIN, GPIO_PUPD::PULL_UP, GPIO_OUTPUT_TYPE::PUSH_PULL, GPIO_OUTPUT_SPEED::LOW );
@@ -128,6 +133,9 @@ int main(void)
 	LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
 	LLPD::tim6_delay( 10000 );
 
+	// begin spi1 dma
+	LLPD::spi1_dma_slave_start( (uint8_t*) &adcInVal, (uint8_t*) &dacOutVal, 1 );
+
 	// ready to start sending audio
 	audioReady = true;
 
@@ -143,9 +151,10 @@ extern "C" void TIM6_DAC_IRQHandler (void)
 		LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, false );
 		const uint8_t adcHighByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
 		const uint8_t adcLowByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
+		adcInVal = ( adcHighByte << 8 ) | adcLowByte;
 		LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
 		LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, false );
-		const uint16_t dacVal = ( adcHighByte << 8 ) | adcLowByte;
+		const uint16_t dacVal = dacOutVal;
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, 0b0 );
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal >> 8) );
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal & 0xFF) );
