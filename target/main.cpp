@@ -7,8 +7,10 @@
 #define SYS_CLOCK_FREQUENCY 72000000
 
 // global variables
-volatile uint16_t adcInVal = 0;
-volatile uint16_t dacOutVal = 0;
+constexpr unsigned int bufferSize = 256;
+volatile uint16_t adcInVal[bufferSize];
+volatile uint16_t dacOutVal[bufferSize];
+volatile unsigned int adcDacIncr = 0;
 volatile bool audioReady = false;
 
 // peripheral defines
@@ -131,10 +133,10 @@ int main(void)
 
 	// first conversion to be safe
 	LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
-	LLPD::tim6_delay( 10000 );
+	LLPD::tim6_delay( 1000000 );
 
 	// begin spi1 dma
-	LLPD::spi1_dma_slave_start( (uint8_t*) &adcInVal, (uint8_t*) &dacOutVal, 1 );
+	LLPD::spi1_dma_slave_start( (void*) &adcInVal, (void*) &dacOutVal, bufferSize );
 
 	// ready to start sending audio
 	audioReady = true;
@@ -151,10 +153,11 @@ extern "C" void TIM6_DAC_IRQHandler (void)
 		LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, false );
 		const uint8_t adcHighByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
 		const uint8_t adcLowByte = LLPD::spi_master_send_and_recieve( ADC_SPI_NUM, 0b11111111 );
-		adcInVal = ( adcHighByte << 8 ) | adcLowByte;
+		adcInVal[adcDacIncr] = ( adcHighByte << 8 ) | adcLowByte;
 		LLPD::gpio_output_set( ADC_CS_PORT, ADC_CS_PIN, true );
 		LLPD::gpio_output_set( DAC_CS_PORT, DAC_CS_PIN, false );
-		const uint16_t dacVal = dacOutVal;
+		const uint16_t dacVal = dacOutVal[adcDacIncr];
+		adcDacIncr = ( adcDacIncr + 1 ) % bufferSize;
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, 0b0 );
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal >> 8) );
 		LLPD::spi_master_send_and_recieve( DAC_SPI_NUM, (dacVal & 0xFF) );
